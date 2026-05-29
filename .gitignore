@@ -1,3 +1,3 @@
-﻿# 发布包
-cu-font-loader/
-cu-font-loader.zip
+﻿# 编译产物 / 发布包
+dist/
+*.zip
