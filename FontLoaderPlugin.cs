@@ -11,7 +11,6 @@ using System.IO;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
-using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -19,12 +18,11 @@ using UnityEngine.TextCore.LowLevel;
 
 namespace CuFontLoader
 {
-    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.1.1")]
+    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.2.0")]
     public class FontLoaderPlugin : BaseUnityPlugin
     {
         private static ManualLogSource Log;
         private static List<TMP_FontAsset> s_loadedFonts = new List<TMP_FontAsset>();
-        private static Harmony s_harmony;
         internal static ConfigEntry<bool> ReplaceAllText;
 
         private void Awake()
@@ -74,16 +72,13 @@ namespace CuFontLoader
 
             Log.LogInfo("Loaded " + s_loadedFonts.Count + " font(s)");
 
-            // 始终注册 Harmony（check 在 prefix 里做）
-            s_harmony = Harmony.CreateAndPatchAll(typeof(FontReplacerPatch));
-            Log.LogInfo("Harmony patch active");
-
-            // 回退模式：每次场景注入 fallback
+            // 始终注册 sceneLoaded（回退 + 全局替换都在这处理，无需 Harmony）
             SceneManager.sceneLoaded += OnSceneLoaded;
         }
 
         private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
+            // 1. 回退模式：注入全局 fallback 表
             var fallback = TMP_Settings.fallbackFontAssets;
             foreach (var fa in s_loadedFonts)
             {
@@ -92,22 +87,19 @@ namespace CuFontLoader
                     fallback.Add(fa);
                 }
             }
-        }
 
-        /// <summary>
-        /// OnEnable 在 TMP 组件每次激活时调用（首次创建+场景加载+SetActive）。
-        /// 比 Awake 更可靠——Awake 有继承链问题（MonoBehaviour/Graphic/...）。
-        /// </summary>
-        [HarmonyPatch(typeof(TMP_Text), "OnEnable")]
-        private static class FontReplacerPatch
-        {
-            [HarmonyPostfix]
-            private static void Postfix(TMP_Text __instance)
+            // 2. 全局替换模式：遍历场景内所有 TMP_Text，直接设 font
+            if (ReplaceAllText.Value && s_loadedFonts.Count > 0)
             {
-                if (ReplaceAllText.Value && s_loadedFonts.Count > 0)
+                var allTexts = Resources.FindObjectsOfTypeAll<TMP_Text>();
+                foreach (var text in allTexts)
                 {
-                    __instance.font = s_loadedFonts[0];
+                    if (text.font != s_loadedFonts[0])
+                    {
+                        text.font = s_loadedFonts[0];
+                    }
                 }
+                Log.LogInfo("Global replace applied to " + allTexts.Length + " TMP_Text objects");
             }
         }
     }

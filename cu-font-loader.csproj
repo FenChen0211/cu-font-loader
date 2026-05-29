@@ -5,16 +5,12 @@
     <LangVersion>9</LangVersion>
     <OutputPath>bin</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <!-- 编译时需改为你的游戏路径 -->
     <Reference Include="BepInEx">
       <HintPath>YOUR_GAME\BepInEx\core\BepInEx.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="0Harmony">
-      <HintPath>YOUR_GAME\BepInEx\core\0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
@@ -35,6 +31,10 @@
     </Reference>
     <Reference Include="UnityEngine.TextCoreFontEngineModule">
       <HintPath>YOUR_GAME\CasualtiesUnknown_Data\Managed\UnityEngine.TextCoreFontEngineModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>YOUR_GAME\CasualtiesUnknown_Data\Managed\UnityEngine.UI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="System" />
