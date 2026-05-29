@@ -2,6 +2,8 @@
 
 为 Casualties: Unknown（及任何使用 TextMeshPro 的 Unity 游戏）注入 / 替换外部字体的 BepInEx 插件。
 
+> **v1.2.0** 重写了全局替换机制（移除 Harmony，改用 scene callback），之前的 v1.0~v1.1.x 因 `TMP_Text.OnEnable` 继承链 Harmony 解析失败，回退和全局替换均无法正常工作。请使用 v1.2.0+。
+
 ## 安装
 
 1. 确保游戏已安装 [BepInEx](https://github.com/BepInEx/BepInEx)
