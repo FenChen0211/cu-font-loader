@@ -19,7 +19,7 @@ using UnityEngine.TextCore.LowLevel;
 
 namespace CuFontLoader
 {
-    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.1.0")]
+    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.1.1")]
     public class FontLoaderPlugin : BaseUnityPlugin
     {
         private static ManualLogSource Log;
