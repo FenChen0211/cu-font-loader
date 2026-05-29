@@ -24,7 +24,7 @@ namespace CuFontLoader
     {
         private static ManualLogSource Log;
         private static List<TMP_FontAsset> s_loadedFonts = new List<TMP_FontAsset>();
-
+        private static Harmony s_harmony;
         internal static ConfigEntry<bool> ReplaceAllText;
 
         private void Awake()
@@ -74,20 +74,12 @@ namespace CuFontLoader
 
             Log.LogInfo("Loaded " + s_loadedFonts.Count + " font(s)");
 
-            // 全局替换模式：也需要 Harmony patch
-            if (ReplaceAllText.Value)
-            {
-                Harmony.CreateAndPatchAll(typeof(FontReplacerPatch));
-                Log.LogInfo("ReplaceAllText = true, Harmony patch active");
-            }
+            // 始终注册 Harmony（check 在 prefix 里做）
+            s_harmony = Harmony.CreateAndPatchAll(typeof(FontReplacerPatch));
+            Log.LogInfo("Harmony patch active");
 
             // 回退模式：每次场景注入 fallback
             SceneManager.sceneLoaded += OnSceneLoaded;
-
-            ReplaceAllText.SettingChanged += (sender, args) =>
-            {
-                Log.LogInfo("ReplaceAllText changed to: " + ReplaceAllText.Value);
-            };
         }
 
         private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -102,20 +94,20 @@ namespace CuFontLoader
             }
         }
 
-        [HarmonyPatch(typeof(TMP_Text), "set_font")]
+        /// <summary>
+        /// OnEnable 在 TMP 组件每次激活时调用（首次创建+场景加载+SetActive）。
+        /// 比 Awake 更可靠——Awake 有继承链问题（MonoBehaviour/Graphic/...）。
+        /// </summary>
+        [HarmonyPatch(typeof(TMP_Text), "OnEnable")]
         private static class FontReplacerPatch
         {
-            [HarmonyPrefix]
-            private static bool Prefix(ref TMP_FontAsset value)
+            [HarmonyPostfix]
+            private static void Postfix(TMP_Text __instance)
             {
                 if (ReplaceAllText.Value && s_loadedFonts.Count > 0)
                 {
-                    if (!s_loadedFonts.Contains(value))
-                    {
-                        value = s_loadedFonts[0];
-                    }
+                    __instance.font = s_loadedFonts[0];
                 }
-                return true;
             }
         }
     }
