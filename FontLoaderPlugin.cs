@@ -3,13 +3,15 @@
 // https://github.com/FenChen0211/cu-font-loader
 //
 // 独立 BepInEx 插件: 扫描 fonts/ 目录中的 .ttf/.otf 文件，
-// 自动注入 TextMeshPro 全局回退字体表。
+// 注入 TextMeshPro 字体回退表 / 全局替换。
 // 不依赖任何游戏特定代码。
 
 using System.Collections.Generic;
 using System.IO;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
+using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -17,15 +19,25 @@ using UnityEngine.TextCore.LowLevel;
 
 namespace CuFontLoader
 {
-    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.0.0")]
+    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.1.0")]
     public class FontLoaderPlugin : BaseUnityPlugin
     {
         private static ManualLogSource Log;
         private static List<TMP_FontAsset> s_loadedFonts = new List<TMP_FontAsset>();
 
+        internal static ConfigEntry<bool> ReplaceAllText;
+
         private void Awake()
         {
             Log = Logger;
+
+            ReplaceAllText = Config.Bind<bool>(
+                "General",
+                "ReplaceAllText",
+                false,
+                "true = global replace all TMP text with external font, " +
+                "false = fallback only (default)"
+            );
 
             string fontsDir = Path.Combine(Paths.PluginPath, "cu-font-loader", "fonts");
 
@@ -58,11 +70,24 @@ namespace CuFontLoader
                 }
             }
 
-            if (s_loadedFonts.Count > 0)
+            if (s_loadedFonts.Count == 0) return;
+
+            Log.LogInfo("Loaded " + s_loadedFonts.Count + " font(s)");
+
+            // 全局替换模式：也需要 Harmony patch
+            if (ReplaceAllText.Value)
             {
-                Log.LogInfo("Loaded " + s_loadedFonts.Count + " font(s), registering callback");
-                SceneManager.sceneLoaded += OnSceneLoaded;
+                Harmony.CreateAndPatchAll(typeof(FontReplacerPatch));
+                Log.LogInfo("ReplaceAllText = true, Harmony patch active");
             }
+
+            // 回退模式：每次场景注入 fallback
+            SceneManager.sceneLoaded += OnSceneLoaded;
+
+            ReplaceAllText.SettingChanged += (sender, args) =>
+            {
+                Log.LogInfo("ReplaceAllText changed to: " + ReplaceAllText.Value);
+            };
         }
 
         private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -73,8 +98,24 @@ namespace CuFontLoader
                 if (!fallback.Contains(fa))
                 {
                     fallback.Add(fa);
-                    Log.LogInfo("  injected: " + fa.name + " (scene: " + scene.name + ")");
                 }
+            }
+        }
+
+        [HarmonyPatch(typeof(TMP_Text), "set_font")]
+        private static class FontReplacerPatch
+        {
+            [HarmonyPrefix]
+            private static bool Prefix(ref TMP_FontAsset value)
+            {
+                if (ReplaceAllText.Value && s_loadedFonts.Count > 0)
+                {
+                    if (!s_loadedFonts.Contains(value))
+                    {
+                        value = s_loadedFonts[0];
+                    }
+                }
+                return true;
             }
         }
     }
