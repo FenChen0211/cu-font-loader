@@ -1,3 +1,5 @@
-﻿# 编译产物 / 发布包
+# Build artifacts / release packages
+bin/
+obj/
 dist/
 *.zip
