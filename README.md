@@ -136,22 +136,18 @@ BepInEx 运行时替换更干净：删除插件后，游戏就会恢复原样。
 
 ## 编译
 
-项目默认游戏路径为：
+项目不会内置任何人的本机游戏路径。编译时需要告诉 MSBuild 游戏安装目录。
 
-```text
-D:\stm++ jieyong\steamapps\common\Casualties Unknown Demo
-```
-
-直接编译：
-
-```bash
-dotnet build
-```
-
-如果游戏装在别的位置：
-
+方式一：命令行传入 `GameDir`：
 ```bash
 dotnet build -p:GameDir="D:\path\to\Casualties Unknown Demo"
+```
+
+方式二：设置环境变量 `CU_GAME_DIR` 后直接编译：
+
+```powershell
+$env:CU_GAME_DIR="D:\path\to\Casualties Unknown Demo"
+dotnet build
 ```
 
 输出文件：
@@ -159,6 +155,8 @@ dotnet build -p:GameDir="D:\path\to\Casualties Unknown Demo"
 ```text
 bin/cu-font-loader.dll
 ```
+
+`GameDir` 应指向包含 `BepInEx/` 和 `CasualtiesUnknown_Data/` 的游戏根目录。
 
 ## 许可
 

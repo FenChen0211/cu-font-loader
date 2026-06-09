@@ -5,9 +5,15 @@
     <LangVersion>9</LangVersion>
     <OutputPath>bin</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <Version>1.3.0</Version>
-    <GameDir Condition="'$(GameDir)' == ''">D:\stm++ jieyong\steamapps\common\Casualties Unknown Demo</GameDir>
+    <Version>1.3.1</Version>
+    <GameDir Condition="'$(GameDir)' == ''">$(CU_GAME_DIR)</GameDir>
   </PropertyGroup>
+
+  <Target Name="ValidateGameDir" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(GameDir)' == ''" Text="GameDir is not set. Build with -p:GameDir=&quot;D:\path\to\Casualties Unknown Demo&quot; or set the CU_GAME_DIR environment variable." />
+    <Error Condition="!Exists('$(GameDir)\BepInEx\core\BepInEx.dll')" Text="BepInEx.dll was not found under GameDir. Check GameDir: $(GameDir)" />
+    <Error Condition="!Exists('$(GameDir)\CasualtiesUnknown_Data\Managed\Unity.TextMeshPro.dll')" Text="Unity.TextMeshPro.dll was not found under GameDir. Check GameDir: $(GameDir)" />
+  </Target>
 
   <ItemGroup>
     <!-- Override with: dotnet build -p:GameDir="D:\path\to\Casualties Unknown Demo" -->
