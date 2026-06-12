@@ -14,7 +14,7 @@ using UnityEngine.TextCore.LowLevel;
 
 namespace CuFontLoader
 {
-    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.3.0")]
+    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.3.2")]
     public class FontLoaderPlugin : BaseUnityPlugin
     {
         private static ManualLogSource Log;
@@ -49,58 +49,58 @@ namespace CuFontLoader
                 "General",
                 "ReplaceAllText",
                 false,
-                "Legacy option. If ReplaceMode is left at FallbackOnly, true upgrades it to ReplaceOnce."
+                "旧版兼容选项。如果 ReplaceMode 仍为 FallbackOnly，且此项为 true，则会自动使用 ReplaceOnce。"
             );
 
             ReplaceMode = Config.Bind(
                 "General",
                 "ReplaceMode",
                 ReplaceAllText.Value ? FontReplaceMode.ReplaceOnce : FontReplaceMode.FallbackOnly,
-                "FallbackOnly = only add external font as TMP fallback. " +
-                "ReplaceOnce = replace each TMP text once when found. " +
-                "Persistent = low-frequency reapply if the game changes it back."
+                "FallbackOnly = 只把外部字体加入 TMP fallback，不主动替换游戏字体。 " +
+                "ReplaceOnce = 发现 TMP 文本时替换一次，并持续补上新生成的文本。 " +
+                "Persistent = 低频反复检查，如果游戏把字体改回去，会再改回来。"
             );
 
             ScanIntervalSeconds = Config.Bind(
                 "General",
                 "ScanIntervalSeconds",
                 1.0f,
-                "How often to scan for TMP text after scenes load when ReplaceMode is ReplaceOnce or Persistent."
+                "ReplaceOnce 或 Persistent 模式下，扫描新 TMP 文本的间隔秒数。"
             );
 
             AtlasSize = Config.Bind(
                 "Font",
                 "AtlasSize",
                 4096,
-                "Dynamic TMP atlas size for external fonts. Larger values help CJK fonts avoid falling back to the game font."
+                "外部 TMP 动态字体图集大小。中文字符较多，较大的图集可以减少回退到游戏原字体的情况。"
             );
 
             SamplingPointSize = Config.Bind(
                 "Font",
                 "SamplingPointSize",
                 36,
-                "Sampling point size used when creating the TMP font asset."
+                "创建 TMP 字体资产时使用的采样字号。"
             );
 
             AtlasPadding = Config.Bind(
                 "Font",
                 "AtlasPadding",
                 5,
-                "Glyph padding used when creating the TMP font asset."
+                "创建 TMP 字体资产时使用的字形间距。"
             );
 
             LogTextDetails = Config.Bind(
                 "Debug",
                 "LogTextDetails",
                 false,
-                "Log TMP text object names, active state, font, material, and text samples during font passes."
+                "调试用。开启后会在日志中输出 TMP 文本对象名称、激活状态、字体、材质和文本片段。"
             );
 
             MaxLoggedTexts = Config.Bind(
                 "Debug",
                 "MaxLoggedTexts",
                 80,
-                "Maximum TMP text objects to log per font pass when LogTextDetails is true."
+                "LogTextDetails 开启时，每次字体扫描最多输出多少个 TMP 文本对象。"
             );
 
             string fontsDir = Path.Combine(Paths.PluginPath, "cu-font-loader", "fonts");

@@ -1,6 +1,6 @@
 # cu-font-loader
 
-`cu-font-loader` 是给 **Casualties: Unknown** 用的 BepInEx 字体加载插件。它会从外部加载 `.ttf` / `.otf` 字体，并在运行时应用到 TextMeshPro 文本上。
+`cu-font-loader` 是给 **Casualties: Unknown** 使用的 BepInEx 字体加载插件。它会从外部加载 `.ttf` / `.otf` 字体，并在运行时应用到 TextMeshPro 文本上。
 
 这个插件主要用于把游戏里的像素字体替换成更易读的字体，尤其适合简体中文。
 
@@ -9,7 +9,7 @@
 - 从 `BepInEx/plugins/cu-font-loader/fonts/` 加载字体
 - 支持 `.ttf` 和 `.otf`
 - 可作为 TextMeshPro fallback 字体补缺字
-- 可运行时替换已有文本和后续生成的文本
+- 可在运行时替换已有文本和后续生成的文本
 - 同时处理 TextMeshPro 文本和旧版 `UnityEngine.UI.Text`
 - 替换时保留游戏原字体作为 fallback，避免符号、图标或缺字变成方块
 - 不修改游戏资源包
@@ -24,7 +24,7 @@
 BepInEx/plugins/cu-font-loader/cu-font-loader.dll
 ```
 
-3. 把你想用的 `.ttf` 或 `.otf` 字体放到：
+3. 把你想使用的 `.ttf` 或 `.otf` 字体放到：
 
 ```text
 BepInEx/plugins/cu-font-loader/fonts/
@@ -55,7 +55,7 @@ BepInEx/config/fenchen.cu-font-loader.cfg
 
 ```ini
 [General]
-ReplaceMode = FallbackOnly
+ReplaceMode = Persistent
 ScanIntervalSeconds = 1
 ```
 
@@ -64,12 +64,10 @@ ScanIntervalSeconds = 1
 | 模式 | 效果 | 适合情况 |
 |---|---|---|
 | `FallbackOnly` | 只把外部字体加入 fallback，不主动替换游戏字体 | 最安全，只想补缺字 |
-| `ReplaceOnce` | 发现 TMP 文本时替换一次；后续新生成的文本会通过低频扫描补上 | 推荐的字体替换模式 |
-| `Persistent` | 如果游戏把字体改回去，插件会低频再改回来 | 仍有部分文字保持像素字体时再用 |
+| `ReplaceOnce` | 发现 TMP 文本时替换一次；后续新生成的文本会通过低频扫描补上 | 常规字体替换 |
+| `Persistent` | 如果游戏把字体改回去，插件会低频再改回来 | 推荐，适合这款游戏 |
 
-`ReplaceOnce` 和 `Persistent` 会按 `ScanIntervalSeconds` 低频扫描新出现的文字。默认是 `1` 秒。
-
-不建议把扫描间隔设得太小。默认值一般就够了。
+`ReplaceOnce` 和 `Persistent` 会按 `ScanIntervalSeconds` 低频扫描新出现的文字。默认 `1` 秒一般够用，不建议设得太小。
 
 ### Font
 
@@ -80,9 +78,9 @@ SamplingPointSize = 36
 AtlasPadding = 5
 ```
 
-`AtlasSize` 控制外部字体的动态 TMP 图集大小。中文字符很多，如果图集太小，TMP 会因为放不下新字形而回退到游戏原字体，看起来就像仍然有部分像素字。
+`AtlasSize` 控制外部字体的动态 TMP 图集大小。中文字符很多，如果图集太小，TMP 可能会回退到游戏原字体，看起来像还有一部分像素字。
 
-默认 `4096` 比旧版的 `512` 更适合中文。一般不需要改；如果你的显存非常紧张，可以降到 `2048`，但残留像素字的概率会变高。
+默认 `4096` 通常适合中文。如果显存很紧张，可以降到 `2048`，但残留原字体的概率会变高。
 
 ### Debug
 
@@ -92,11 +90,29 @@ LogTextDetails = false
 MaxLoggedTexts = 80
 ```
 
-如果某个界面仍然没有被替换，可以临时把 `LogTextDetails` 改成 `true`。插件会在日志里输出 TMP 文本对象的名称、激活状态、字体名、材质名和文本片段，方便定位那部分 UI 到底用了什么字体链。
+如果某个界面仍然没有被替换，可以临时把 `LogTextDetails` 改成 `true`。插件会在日志里输出 TMP 文本对象名称、激活状态、字体名、材质名和文本片段，方便定位 UI 到底使用了什么字体链。
 
 平时建议保持关闭。
 
-### 旧配置兼容
+## 语言切换刷新
+
+在 Casualties: Unknown Demo 中，部分本地化 UI 会在启动早期生成。插件已经替换了字体对象，但这些 UI 有时需要游戏重新加载本地化界面后才会完全刷新。
+
+如果安装插件后仍看到少量字体没有替换，可以在游戏内手动切换一次语言，例如：
+
+```text
+中文 -> English -> 中文
+```
+
+或：
+
+```text
+English -> 中文
+```
+
+游戏切换语言时会重载当前场景，插件会在场景重载后重新扫描并替换字体。实际测试中，这通常可以完成全局字体替换。
+
+## 旧配置兼容
 
 旧版本使用：
 
@@ -120,7 +136,7 @@ ReplaceAllText = true
 插件同时把游戏字体 A 加入字体 B 的 fallback 列表
 ```
 
-这样视觉上会优先使用你的外部字体；如果外部字体缺少某些字符、图标或特殊符号，TextMeshPro 仍然可以回退到游戏原字体。
+这样视觉上会优先使用外部字体；如果外部字体缺少某些字符、图标或特殊符号，TextMeshPro 仍然可以回退到游戏原字体。
 
 ## 为什么不直接替换游戏内置字体？
 
@@ -138,12 +154,13 @@ BepInEx 运行时替换更干净：删除插件后，游戏就会恢复原样。
 
 项目不会内置任何人的本机游戏路径。编译时需要告诉 MSBuild 游戏安装目录。
 
-方式一：命令行传入 `GameDir`：
-```bash
+方式一：命令行传入 `GameDir`
+
+```powershell
 dotnet build -p:GameDir="D:\path\to\Casualties Unknown Demo"
 ```
 
-方式二：设置环境变量 `CU_GAME_DIR` 后直接编译：
+方式二：设置环境变量 `CU_GAME_DIR` 后直接编译
 
 ```powershell
 $env:CU_GAME_DIR="D:\path\to\Casualties Unknown Demo"
