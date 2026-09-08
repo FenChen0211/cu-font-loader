@@ -3,3 +3,6 @@ bin/
 obj/
 dist/
 *.zip
+
+# Command Code session data
+.commandcode/
