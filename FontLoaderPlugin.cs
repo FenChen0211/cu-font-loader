@@ -28,6 +28,10 @@ namespace CuFontLoader
         private static readonly List<string> ExcludedObjectPatterns = new List<string>();
         private static readonly List<string> ExcludedFontPatterns = new List<string>();
         private static readonly List<string> ExcludedMaterialPatterns = new List<string>();
+        private static readonly Dictionary<UnityEngine.Object, string> DecisionLogCache = new Dictionary<UnityEngine.Object, string>();
+        private static int decisionLogCount;
+        private static bool decisionLogCapReached;
+        private static int scanPassCount;
 
         internal static ConfigEntry<bool> ReplaceAllText;
         internal static ConfigEntry<FontReplaceMode> ReplaceMode;
@@ -42,6 +46,8 @@ namespace CuFontLoader
         internal static ConfigEntry<string> ExcludedObjectNames;
         internal static ConfigEntry<bool> LogTextDetails;
         internal static ConfigEntry<int> MaxLoggedTexts;
+        internal static ConfigEntry<bool> CompatibilityLog;
+        internal static ConfigEntry<int> MaxCompatibilityLogs;
 
         private static float s_nextScanTime;
 
@@ -165,6 +171,21 @@ namespace CuFontLoader
                 "MaxLoggedTexts",
                 80,
                 "LogTextDetails 开启时，每次字体扫描最多输出多少个 TMP 文本对象。"
+            );
+
+            CompatibilityLog = Config.Bind(
+                "Debug",
+                "CompatibilityLog",
+                false,
+                "兼容性调试日志。开启后，文本被替换或跳过时会输出一行决策记录（场景、对象名、字体、材质、原因）。" +
+                "同一对象的同一决策只记录一次，不会持续刷屏。排查其他 Mod UI 被误伤时开启。"
+            );
+
+            MaxCompatibilityLogs = Config.Bind(
+                "Debug",
+                "MaxCompatibilityLogs",
+                200,
+                "CompatibilityLog 开启时，本次游戏会话最多输出多少条决策记录，防止日志过大。"
             );
 
             MigrateLegacyReplaceMode();
@@ -382,6 +403,128 @@ namespace CuFontLoader
             return false;
         }
 
+        private static bool TryBeginDecisionLog(UnityEngine.Object key, string signature)
+        {
+            if (!CompatibilityLog.Value || decisionLogCapReached)
+            {
+                return false;
+            }
+
+            string existing;
+            if (DecisionLogCache.TryGetValue(key, out existing) && existing == signature)
+            {
+                return false;
+            }
+
+            int cap = Mathf.Clamp(MaxCompatibilityLogs.Value, 1, 100000);
+            if (decisionLogCount >= cap)
+            {
+                decisionLogCapReached = true;
+                Log.LogInfo("[Compat] decision log cap reached (" + cap + "), further records are suppressed");
+                return false;
+            }
+
+            DecisionLogCache[key] = signature;
+            decisionLogCount++;
+            return true;
+        }
+
+        private static void LogReplaced(TMP_Text text, TMP_FontAsset previousFont)
+        {
+            string from = previousFont != null ? previousFont.name : "<null>";
+            if (!TryBeginDecisionLog(text, "R|" + from))
+            {
+                return;
+            }
+
+            string materialName = text.fontSharedMaterial != null ? text.fontSharedMaterial.name : "<null>";
+            Log.LogInfo(
+                "[Compat] Scene=" + SceneManager.GetActiveScene().name +
+                " Object=" + text.gameObject.name +
+                " Font=" + text.font.name +
+                " Material=" + materialName +
+                " Action=Replaced" +
+                " From=" + from);
+        }
+
+        private static void LogSkipped(TMP_Text text, string reason)
+        {
+            string fontName = text.font != null ? text.font.name : "<null>";
+            if (!TryBeginDecisionLog(text, "S|" + reason + "|" + fontName))
+            {
+                return;
+            }
+
+            string materialName = text.fontSharedMaterial != null ? text.fontSharedMaterial.name : "<null>";
+            Log.LogInfo(
+                "[Compat] Scene=" + SceneManager.GetActiveScene().name +
+                " Object=" + text.gameObject.name +
+                " Font=" + fontName +
+                " Material=" + materialName +
+                " Action=Skipped" +
+                " Reason=" + reason);
+        }
+
+        private static void LogLegacyReplaced(UnityEngine.UI.Text text, Font previousFont)
+        {
+            string from = previousFont != null ? previousFont.name : "<null>";
+            if (!TryBeginDecisionLog(text, "R|" + from))
+            {
+                return;
+            }
+
+            Log.LogInfo(
+                "[Compat] Scene=" + SceneManager.GetActiveScene().name +
+                " Object=" + text.gameObject.name +
+                " Font=" + text.font.name +
+                " Action=Replaced" +
+                " From=" + from);
+        }
+
+        private static void LogLegacySkipped(UnityEngine.UI.Text text, string reason)
+        {
+            string fontName = text.font != null ? text.font.name : "<null>";
+            if (!TryBeginDecisionLog(text, "S|" + reason + "|" + fontName))
+            {
+                return;
+            }
+
+            Log.LogInfo(
+                "[Compat] Scene=" + SceneManager.GetActiveScene().name +
+                " Object=" + text.gameObject.name +
+                " Font=" + fontName +
+                " Action=Skipped" +
+                " Reason=" + reason);
+        }
+
+        private static void PruneDestroyed()
+        {
+            SeenTexts.RemoveWhere(t => t == null);
+            SeenLegacyTexts.RemoveWhere(t => t == null);
+
+            List<UnityEngine.Object> deadKeys = null;
+            foreach (KeyValuePair<UnityEngine.Object, string> pair in DecisionLogCache)
+            {
+                if (pair.Key == null)
+                {
+                    if (deadKeys == null)
+                    {
+                        deadKeys = new List<UnityEngine.Object>();
+                    }
+
+                    deadKeys.Add(pair.Key);
+                }
+            }
+
+            if (deadKeys != null)
+            {
+                for (int i = 0; i < deadKeys.Count; i++)
+                {
+                    DecisionLogCache.Remove(deadKeys[i]);
+                }
+            }
+        }
+
         private static void LoadFont(string fontPath)
         {
             try
@@ -423,6 +566,7 @@ namespace CuFontLoader
         {
             SeenTexts.Clear();
             SeenLegacyTexts.Clear();
+            DecisionLogCache.Clear();
             ApplyToLoadedText(true);
             ApplyToLoadedLegacyText(true);
         }
@@ -433,10 +577,17 @@ namespace CuFontLoader
 
             TMP_Text[] allTexts = Resources.FindObjectsOfTypeAll<TMP_Text>();
             int replaced = 0;
+            int skipped = 0;
             int patchedFallback = 0;
             int patchedControls = PatchTmpControls();
             FontReplaceMode mode = GetEffectiveMode();
             bool enforceRepeatedly = mode == FontReplaceMode.Aggressive || mode == FontReplaceMode.Persistent;
+
+            scanPassCount++;
+            if (scanPassCount % 32 == 0)
+            {
+                PruneDestroyed();
+            }
 
             foreach (TMP_Text text in allTexts)
             {
@@ -458,6 +609,12 @@ namespace CuFontLoader
                 TextDecision decision = EvaluateTMPText(text);
                 if (!decision.Replace)
                 {
+                    if (decision.SkipReason != null)
+                    {
+                        skipped++;
+                        LogSkipped(text, decision.SkipReason);
+                    }
+
                     continue;
                 }
 
@@ -467,10 +624,12 @@ namespace CuFontLoader
                     continue;
                 }
 
+                TMP_FontAsset previousFont = text.font;
                 if (ReplaceTextFont(text))
                 {
                     SeenTexts.Add(text);
                     replaced++;
+                    LogReplaced(text, previousFont);
                 }
             }
 
@@ -484,6 +643,7 @@ namespace CuFontLoader
                 Log.LogInfo(
                     "Font pass: scanned " + allTexts.Length +
                     ", replaced " + replaced +
+                    ", skipped " + skipped +
                     ", patched fallback " + patchedFallback +
                     ", patched controls " + patchedControls);
             }
@@ -602,6 +762,7 @@ namespace CuFontLoader
                 if (MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns) ||
                     MatchesExclusion(text.font.name, ExcludedFontPatterns))
                 {
+                    LogLegacySkipped(text, "Excluded");
                     continue;
                 }
 
@@ -611,11 +772,13 @@ namespace CuFontLoader
                     continue;
                 }
 
+                Font previousFont = text.font;
                 if (text.font != PrimaryUnityFont)
                 {
                     text.font = PrimaryUnityFont;
                     SeenLegacyTexts.Add(text);
                     replaced++;
+                    LogLegacyReplaced(text, previousFont);
                 }
             }
 
