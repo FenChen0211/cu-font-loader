@@ -25,6 +25,9 @@ namespace CuFontLoader
         private static Font PrimaryUnityFont;
         private static readonly HashSet<TMP_Text> SeenTexts = new HashSet<TMP_Text>();
         private static readonly HashSet<UnityEngine.UI.Text> SeenLegacyTexts = new HashSet<UnityEngine.UI.Text>();
+        private static readonly List<string> ExcludedObjectPatterns = new List<string>();
+        private static readonly List<string> ExcludedFontPatterns = new List<string>();
+        private static readonly List<string> ExcludedMaterialPatterns = new List<string>();
 
         internal static ConfigEntry<bool> ReplaceAllText;
         internal static ConfigEntry<FontReplaceMode> ReplaceMode;
@@ -33,6 +36,10 @@ namespace CuFontLoader
         internal static ConfigEntry<int> AtlasSize;
         internal static ConfigEntry<int> SamplingPointSize;
         internal static ConfigEntry<int> AtlasPadding;
+        internal static ConfigEntry<bool> PreserveCustomMaterials;
+        internal static ConfigEntry<string> ExcludedFontNames;
+        internal static ConfigEntry<string> ExcludedMaterialNames;
+        internal static ConfigEntry<string> ExcludedObjectNames;
         internal static ConfigEntry<bool> LogTextDetails;
         internal static ConfigEntry<int> MaxLoggedTexts;
 
@@ -111,6 +118,40 @@ namespace CuFontLoader
                 5,
                 "创建 TMP 字体资产时使用的字形间距。"
             );
+
+            PreserveCustomMaterials = Config.Bind(
+                "Compatibility",
+                "PreserveCustomMaterials",
+                true,
+                "保护其他 Mod 的自定义材质。开启时，使用非默认材质（描边、辉光、自定义 Shader 等）的文本会被整体跳过，不会替换其字体。" +
+                "关闭后恢复旧版行为：这些文本的字体和材质会被一起替换。"
+            );
+
+            ExcludedFontNames = Config.Bind(
+                "Compatibility",
+                "ExcludedFontNames",
+                "",
+                "不替换使用这些字体（FontAsset 名称）的文本。逗号分隔，不区分大小写，名称包含关键字即命中。"
+            );
+
+            ExcludedMaterialNames = Config.Bind(
+                "Compatibility",
+                "ExcludedMaterialNames",
+                "",
+                "不替换使用这些材质（材质名称）的文本。逗号分隔，不区分大小写，名称包含关键字即命中。"
+            );
+
+            ExcludedObjectNames = Config.Bind(
+                "Compatibility",
+                "ExcludedObjectNames",
+                "",
+                "不替换这些 GameObject 名称的 TMP / 旧版文本。逗号分隔，不区分大小写，名称包含关键字即命中。"
+            );
+
+            ExcludedFontNames.SettingChanged += OnExclusionSettingChanged;
+            ExcludedMaterialNames.SettingChanged += OnExclusionSettingChanged;
+            ExcludedObjectNames.SettingChanged += OnExclusionSettingChanged;
+            RefreshExclusionCache();
 
             LogTextDetails = Config.Bind(
                 "Debug",
@@ -227,7 +268,45 @@ namespace CuFontLoader
                 return decision;
             }
 
-            if (GetEffectiveMode() == FontReplaceMode.Safe)
+            if (MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns) ||
+                MatchesExclusion(font.name, ExcludedFontPatterns))
+            {
+                decision.Replace = false;
+                decision.SkipReason = "Excluded";
+                return decision;
+            }
+
+            Material material = text.fontSharedMaterial;
+            if (material == null)
+            {
+                decision.Replace = false;
+                decision.SkipReason = "MaterialMissing";
+                return decision;
+            }
+
+            if (MatchesExclusion(material.name, ExcludedMaterialPatterns))
+            {
+                decision.Replace = false;
+                decision.SkipReason = "ExcludedMaterial";
+                return decision;
+            }
+
+            FontReplaceMode mode = GetEffectiveMode();
+            if (mode != FontReplaceMode.Aggressive && !IsTmpShader(material.shader))
+            {
+                decision.Replace = false;
+                decision.SkipReason = "CustomShader";
+                return decision;
+            }
+
+            if (material != font.material && PreserveCustomMaterials.Value)
+            {
+                decision.Replace = false;
+                decision.SkipReason = "CustomMaterial";
+                return decision;
+            }
+
+            if (mode == FontReplaceMode.Safe)
             {
                 string content = text.text;
                 if (content != null && content.IndexOf("<sprite", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -239,6 +318,68 @@ namespace CuFontLoader
             }
 
             return decision;
+        }
+
+        private static bool IsTmpShader(Shader shader)
+        {
+            if (shader == null)
+            {
+                return false;
+            }
+
+            string shaderName = shader.name;
+            return shaderName != null &&
+                (shaderName.StartsWith("TextMeshPro/", StringComparison.OrdinalIgnoreCase) ||
+                 shaderName.StartsWith("Text Mesh Pro/", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void OnExclusionSettingChanged(object sender, EventArgs e)
+        {
+            RefreshExclusionCache();
+        }
+
+        private static void RefreshExclusionCache()
+        {
+            ParseExclusions(ExcludedObjectNames.Value, ExcludedObjectPatterns);
+            ParseExclusions(ExcludedFontNames.Value, ExcludedFontPatterns);
+            ParseExclusions(ExcludedMaterialNames.Value, ExcludedMaterialPatterns);
+        }
+
+        private static void ParseExclusions(string raw, List<string> target)
+        {
+            target.Clear();
+            if (string.IsNullOrEmpty(raw))
+            {
+                return;
+            }
+
+            string[] parts = raw.Split(',');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string part = parts[i].Trim();
+                if (part.Length > 0)
+                {
+                    target.Add(part);
+                }
+            }
+        }
+
+        private static bool MatchesExclusion(string value, List<string> patterns)
+        {
+            if (value == null || patterns.Count == 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < patterns.Count; i++)
+            {
+                if (value.IndexOf(patterns[i], StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void LoadFont(string fontPath)
@@ -458,6 +599,12 @@ namespace CuFontLoader
                     continue;
                 }
 
+                if (MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns) ||
+                    MatchesExclusion(text.font.name, ExcludedFontPatterns))
+                {
+                    continue;
+                }
+
                 bool firstSeen = !SeenLegacyTexts.Contains(text);
                 if (!enforceRepeatedly && !firstSeen)
                 {
@@ -541,11 +688,14 @@ namespace CuFontLoader
             }
 
             Material currentMaterial = text.fontSharedMaterial;
-            bool materialIsDefault = currentMaterial != null && currentMaterial == currentFont.material;
+            bool replaceMaterial =
+                currentMaterial == null ||
+                currentMaterial == currentFont.material ||
+                !PreserveCustomMaterials.Value;
 
             text.font = replacement;
 
-            if (materialIsDefault && text.fontSharedMaterial != replacement.material)
+            if (replaceMaterial && text.fontSharedMaterial != replacement.material)
             {
                 text.fontSharedMaterial = replacement.material;
             }
