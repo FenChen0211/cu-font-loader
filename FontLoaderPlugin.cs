@@ -211,6 +211,9 @@ namespace CuFontLoader
 
             if (LoadedFonts.Count == 0)
             {
+                Log.LogWarning(
+                    "No .ttf/.otf fonts found in " + fontsDir +
+                    " - put a font there or the plugin will do nothing.");
                 return;
             }
 
