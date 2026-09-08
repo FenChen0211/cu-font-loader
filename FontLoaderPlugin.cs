@@ -42,7 +42,16 @@ namespace CuFontLoader
         {
             FallbackOnly,
             ReplaceOnce,
-            Persistent
+            Persistent,
+            Safe,
+            Normal,
+            Aggressive
+        }
+
+        private struct TextDecision
+        {
+            public bool Replace;
+            public string SkipReason;
         }
 
         private void Awake()
@@ -53,16 +62,18 @@ namespace CuFontLoader
                 "General",
                 "ReplaceAllText",
                 false,
-                "旧版兼容选项。如果 ReplaceMode 仍为 FallbackOnly，且此项为 true，则会自动使用 ReplaceOnce。"
+                "已废弃。这是旧版本的开关，现在不再产生任何作用，保留只是为了不破坏旧配置文件。请使用 ReplaceMode。"
             );
 
             ReplaceMode = Config.Bind(
                 "General",
                 "ReplaceMode",
-                ReplaceAllText.Value ? FontReplaceMode.ReplaceOnce : FontReplaceMode.FallbackOnly,
-                "FallbackOnly = 只把外部字体加入 TMP fallback，不主动替换游戏字体。 " +
-                "ReplaceOnce = 发现 TMP 文本时替换一次，并持续补上新生成的文本。 " +
-                "Persistent = 低频反复检查，如果游戏把字体改回去，会再改回来。"
+                FontReplaceMode.Normal,
+                "FallbackOnly = 只把外部字体加入 TMP fallback，不主动替换游戏字体（最安全）。 " +
+                "Safe = 只替换普通文本，跳过明显使用 Sprite、特殊字体或自定义材质的文本。 " +
+                "Normal = 替换大多数文本，同时保留其他 Mod 的自定义 UI 和材质。 " +
+                "Aggressive = 接近旧版 Persistent 行为，反复强制替换所有文本。 " +
+                "旧版 ReplaceOnce / Persistent 会在首次启动时自动迁移为 Normal / Aggressive。"
             );
 
             ScanIntervalSeconds = Config.Bind(
@@ -115,6 +126,8 @@ namespace CuFontLoader
                 "LogTextDetails 开启时，每次字体扫描最多输出多少个 TMP 文本对象。"
             );
 
+            MigrateLegacyReplaceMode();
+
             string fontsDir = Path.Combine(Paths.PluginPath, "cu-font-loader", "fonts");
             if (!Directory.Exists(fontsDir))
             {
@@ -148,7 +161,7 @@ namespace CuFontLoader
 
         private void Update()
         {
-            if (LoadedFonts.Count == 0 || ReplaceMode.Value == FontReplaceMode.FallbackOnly)
+            if (LoadedFonts.Count == 0 || GetEffectiveMode() == FontReplaceMode.FallbackOnly)
             {
                 return;
             }
@@ -162,6 +175,70 @@ namespace CuFontLoader
             s_nextScanTime = Time.unscaledTime + interval;
             ApplyToLoadedText(false);
             ApplyToLoadedLegacyText(false);
+        }
+
+        private static FontReplaceMode GetEffectiveMode()
+        {
+            switch (ReplaceMode.Value)
+            {
+                case FontReplaceMode.ReplaceOnce:
+                    return FontReplaceMode.Normal;
+                case FontReplaceMode.Persistent:
+                    return FontReplaceMode.Aggressive;
+                default:
+                    return ReplaceMode.Value;
+            }
+        }
+
+        private void MigrateLegacyReplaceMode()
+        {
+            switch (ReplaceMode.Value)
+            {
+                case FontReplaceMode.ReplaceOnce:
+                    Log.LogInfo("Migrating legacy ReplaceMode: ReplaceOnce -> Normal");
+                    ReplaceMode.Value = FontReplaceMode.Normal;
+                    Config.Save();
+                    break;
+                case FontReplaceMode.Persistent:
+                    Log.LogInfo("Migrating legacy ReplaceMode: Persistent -> Aggressive");
+                    ReplaceMode.Value = FontReplaceMode.Aggressive;
+                    Config.Save();
+                    break;
+            }
+        }
+
+        private static TextDecision EvaluateTMPText(TMP_Text text)
+        {
+            TextDecision decision = default(TextDecision);
+            decision.Replace = true;
+
+            TMP_FontAsset font = text.font;
+            if (font == null)
+            {
+                decision.Replace = false;
+                decision.SkipReason = "FontMissing";
+                return decision;
+            }
+
+            TMP_FontAsset primary = GetPrimaryFontAsset();
+            if (primary != null && font == primary)
+            {
+                decision.Replace = false;
+                return decision;
+            }
+
+            if (GetEffectiveMode() == FontReplaceMode.Safe)
+            {
+                string content = text.text;
+                if (content != null && content.IndexOf("<sprite", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    decision.Replace = false;
+                    decision.SkipReason = "SpriteTag";
+                    return decision;
+                }
+            }
+
+            return decision;
         }
 
         private static void LoadFont(string fontPath)
@@ -217,6 +294,8 @@ namespace CuFontLoader
             int replaced = 0;
             int patchedFallback = 0;
             int patchedControls = PatchTmpControls();
+            FontReplaceMode mode = GetEffectiveMode();
+            bool enforceRepeatedly = mode == FontReplaceMode.Aggressive || mode == FontReplaceMode.Persistent;
 
             foreach (TMP_Text text in allTexts)
             {
@@ -230,19 +309,26 @@ namespace CuFontLoader
                     patchedFallback++;
                 }
 
-                if (ReplaceMode.Value == FontReplaceMode.FallbackOnly)
+                if (mode == FontReplaceMode.FallbackOnly)
                 {
                     continue;
                 }
 
-                bool firstSeen = SeenTexts.Add(text);
-                if (ReplaceMode.Value == FontReplaceMode.ReplaceOnce && !firstSeen)
+                TextDecision decision = EvaluateTMPText(text);
+                if (!decision.Replace)
+                {
+                    continue;
+                }
+
+                bool firstSeen = !SeenTexts.Contains(text);
+                if (!enforceRepeatedly && !firstSeen)
                 {
                     continue;
                 }
 
                 if (ReplaceTextFont(text))
                 {
+                    SeenTexts.Add(text);
                     replaced++;
                 }
             }
@@ -305,7 +391,7 @@ namespace CuFontLoader
 
         private static int PatchTmpControls()
         {
-            if (LoadedFonts.Count == 0 || ReplaceMode.Value == FontReplaceMode.FallbackOnly)
+            if (LoadedFonts.Count == 0 || GetEffectiveMode() == FontReplaceMode.FallbackOnly)
             {
                 return 0;
             }
@@ -344,7 +430,7 @@ namespace CuFontLoader
 
         private static void ApplyToLoadedLegacyText(bool logResult)
         {
-            if (LoadedUnityFonts.Count == 0 || ReplaceMode.Value == FontReplaceMode.FallbackOnly)
+            if (LoadedUnityFonts.Count == 0 || GetEffectiveMode() == FontReplaceMode.FallbackOnly)
             {
                 return;
             }
@@ -353,6 +439,9 @@ namespace CuFontLoader
             {
                 return;
             }
+
+            FontReplaceMode mode = GetEffectiveMode();
+            bool enforceRepeatedly = mode == FontReplaceMode.Aggressive || mode == FontReplaceMode.Persistent;
 
             UnityEngine.UI.Text[] allTexts = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Text>();
             int replaced = 0;
@@ -364,8 +453,13 @@ namespace CuFontLoader
                     continue;
                 }
 
-                bool firstSeen = SeenLegacyTexts.Add(text);
-                if (ReplaceMode.Value == FontReplaceMode.ReplaceOnce && !firstSeen)
+                if (text.font == null)
+                {
+                    continue;
+                }
+
+                bool firstSeen = !SeenLegacyTexts.Contains(text);
+                if (!enforceRepeatedly && !firstSeen)
                 {
                     continue;
                 }
@@ -373,6 +467,7 @@ namespace CuFontLoader
                 if (text.font != PrimaryUnityFont)
                 {
                     text.font = PrimaryUnityFont;
+                    SeenLegacyTexts.Add(text);
                     replaced++;
                 }
             }
