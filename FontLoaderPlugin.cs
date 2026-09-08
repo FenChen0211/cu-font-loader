@@ -2,6 +2,7 @@
 // Licensed under MIT License
 // https://github.com/FenChen0211/cu-font-loader
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using BepInEx;
@@ -20,12 +21,15 @@ namespace CuFontLoader
         private static ManualLogSource Log;
         private static readonly List<TMP_FontAsset> LoadedFonts = new List<TMP_FontAsset>();
         private static readonly List<Font> LoadedUnityFonts = new List<Font>();
+        private static TMP_FontAsset PrimaryFontAsset;
+        private static Font PrimaryUnityFont;
         private static readonly HashSet<TMP_Text> SeenTexts = new HashSet<TMP_Text>();
         private static readonly HashSet<UnityEngine.UI.Text> SeenLegacyTexts = new HashSet<UnityEngine.UI.Text>();
 
         internal static ConfigEntry<bool> ReplaceAllText;
         internal static ConfigEntry<FontReplaceMode> ReplaceMode;
         internal static ConfigEntry<float> ScanIntervalSeconds;
+        internal static ConfigEntry<string> PrimaryFont;
         internal static ConfigEntry<int> AtlasSize;
         internal static ConfigEntry<int> SamplingPointSize;
         internal static ConfigEntry<int> AtlasPadding;
@@ -68,6 +72,14 @@ namespace CuFontLoader
                 "ReplaceOnce 或 Persistent 模式下，扫描新 TMP 文本的间隔秒数。"
             );
 
+            PrimaryFont = Config.Bind(
+                "General",
+                "PrimaryFont",
+                "",
+                "加载了多个字体时，用哪一个作为主替换字体（按文件名匹配，不含扩展名，不区分大小写）。" +
+                "留空则使用按文件名排序后的第一个字体。其余字体只作为 fallback 使用。"
+            );
+
             AtlasSize = Config.Bind(
                 "Font",
                 "AtlasSize",
@@ -106,16 +118,20 @@ namespace CuFontLoader
             string fontsDir = Path.Combine(Paths.PluginPath, "cu-font-loader", "fonts");
             if (!Directory.Exists(fontsDir))
             {
-                Log.LogInfo("fonts/ dir not found, skipping");
-                return;
+                Directory.CreateDirectory(fontsDir);
+                Log.LogInfo("fonts/ dir missing, created: " + fontsDir);
             }
 
+            List<string> fontPaths = new List<string>();
             foreach (string pattern in new[] { "*.ttf", "*.otf" })
             {
-                foreach (string fontPath in Directory.GetFiles(fontsDir, pattern))
-                {
-                    LoadFont(fontPath);
-                }
+                fontPaths.AddRange(Directory.GetFiles(fontsDir, pattern));
+            }
+
+            fontPaths.Sort(StringComparer.OrdinalIgnoreCase);
+            foreach (string fontPath in fontPaths)
+            {
+                LoadFont(fontPath);
             }
 
             if (LoadedFonts.Count == 0)
@@ -123,7 +139,8 @@ namespace CuFontLoader
                 return;
             }
 
-            Log.LogInfo("Loaded " + LoadedFonts.Count + " font(s)");
+            ResolvePrimaryFont();
+            Log.LogInfo("Loaded " + LoadedFonts.Count + " font(s), primary: " + PrimaryFontAsset.name);
             SceneManager.sceneLoaded += OnSceneLoaded;
             ApplyToLoadedText(true);
             ApplyToLoadedLegacyText(true);
@@ -293,27 +310,13 @@ namespace CuFontLoader
                 return 0;
             }
 
-            TMP_FontAsset replacement = LoadedFonts[0];
-            int patched = 0;
-
-            TMP_Dropdown[] dropdowns = Resources.FindObjectsOfTypeAll<TMP_Dropdown>();
-            foreach (TMP_Dropdown dropdown in dropdowns)
+            TMP_FontAsset primary = GetPrimaryFontAsset();
+            if (primary == null)
             {
-                if (dropdown == null)
-                {
-                    continue;
-                }
-
-                if (ReplaceTextFont(dropdown.captionText))
-                {
-                    patched++;
-                }
-
-                if (ReplaceTextFont(dropdown.itemText))
-                {
-                    patched++;
-                }
+                return 0;
             }
+
+            int patched = 0;
 
             TMP_InputField[] inputFields = Resources.FindObjectsOfTypeAll<TMP_InputField>();
             foreach (TMP_InputField inputField in inputFields)
@@ -323,20 +326,15 @@ namespace CuFontLoader
                     continue;
                 }
 
-                if (inputField.fontAsset != replacement)
+                TMP_Text textComponent = inputField.textComponent;
+                if (textComponent == null || textComponent.font != primary)
                 {
-                    inputField.fontAsset = replacement;
-                    patched++;
+                    continue;
                 }
 
-                if (ReplaceTextFont(inputField.textComponent))
+                if (inputField.fontAsset != primary)
                 {
-                    patched++;
-                }
-
-                TMP_Text placeholderText = inputField.placeholder as TMP_Text;
-                if (ReplaceTextFont(placeholderText))
-                {
+                    inputField.fontAsset = primary;
                     patched++;
                 }
             }
@@ -347,6 +345,11 @@ namespace CuFontLoader
         private static void ApplyToLoadedLegacyText(bool logResult)
         {
             if (LoadedUnityFonts.Count == 0 || ReplaceMode.Value == FontReplaceMode.FallbackOnly)
+            {
+                return;
+            }
+
+            if (PrimaryUnityFont == null)
             {
                 return;
             }
@@ -367,9 +370,9 @@ namespace CuFontLoader
                     continue;
                 }
 
-                if (text.font != LoadedUnityFonts[0])
+                if (text.font != PrimaryUnityFont)
                 {
-                    text.font = LoadedUnityFonts[0];
+                    text.font = PrimaryUnityFont;
                     replaced++;
                 }
             }
@@ -430,27 +433,76 @@ namespace CuFontLoader
                 return false;
             }
 
-            TMP_FontAsset replacement = LoadedFonts[0];
-            bool changed = false;
-            if (text.font != replacement)
+            TMP_FontAsset replacement = GetPrimaryFontAsset();
+            if (replacement == null)
             {
-                text.font = replacement;
-                changed = true;
+                return false;
             }
 
-            Material replacementMaterial = replacement.material;
-            if (replacementMaterial != null && text.fontSharedMaterial != replacementMaterial)
+            TMP_FontAsset currentFont = text.font;
+            if (currentFont == null || currentFont == replacement)
             {
-                text.fontSharedMaterial = replacementMaterial;
-                changed = true;
+                return false;
             }
 
-            if (changed)
+            Material currentMaterial = text.fontSharedMaterial;
+            bool materialIsDefault = currentMaterial != null && currentMaterial == currentFont.material;
+
+            text.font = replacement;
+
+            if (materialIsDefault && text.fontSharedMaterial != replacement.material)
             {
-                text.SetAllDirty();
+                text.fontSharedMaterial = replacement.material;
             }
 
-            return changed;
+            text.SetAllDirty();
+            return true;
+        }
+
+        private static void ResolvePrimaryFont()
+        {
+            PrimaryFontAsset = null;
+            PrimaryUnityFont = null;
+
+            if (LoadedFonts.Count == 0)
+            {
+                return;
+            }
+
+            int index = 0;
+            string wanted = PrimaryFont.Value;
+            if (!string.IsNullOrEmpty(wanted))
+            {
+                for (int i = 0; i < LoadedFonts.Count; i++)
+                {
+                    if (string.Equals(LoadedFonts[i].name, wanted, StringComparison.OrdinalIgnoreCase))
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+
+                if (index == 0 && !string.Equals(LoadedFonts[0].name, wanted, StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.LogWarning("PrimaryFont '" + wanted + "' not found, using '" + LoadedFonts[0].name + "'");
+                }
+            }
+
+            PrimaryFontAsset = LoadedFonts[index];
+            if (index < LoadedUnityFonts.Count)
+            {
+                PrimaryUnityFont = LoadedUnityFonts[index];
+            }
+        }
+
+        private static TMP_FontAsset GetPrimaryFontAsset()
+        {
+            if (PrimaryFontAsset == null && LoadedFonts.Count > 0)
+            {
+                ResolvePrimaryFont();
+            }
+
+            return PrimaryFontAsset;
         }
     }
 }
