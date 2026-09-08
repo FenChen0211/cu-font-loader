@@ -1,36 +1,22 @@
-# cu-font-loader
+# CU Font Loader — Custom Font & Fallback Framework for Casualties: Unknown
 
-`cu-font-loader` 是给 **Casualties: Unknown** 使用的 BepInEx 字体加载插件。它会从外部加载 `.ttf` / `.otf` 字体，并在运行时应用到 TextMeshPro 文本上。
+`cu-font-loader` 是一个面向 **Casualties: Unknown** 的独立 BepInEx 插件，提供自定义字体替换与 CJK 字形回退（glyph fallback）框架，用于改善游戏内文字的可读性与无障碍体验。
 
-这个插件主要用于把游戏里的像素字体替换成更易读的字体，尤其适合简体中文。
+- **Custom font replacement**：从外部加载 `.ttf` / `.otf`，运行时替换 TextMeshPro 字体
+- **CJK glyph fallback**：缺字自动回退到游戏原字体，图标、符号不变成方块
+- **Mod UI compatibility**：保守的兼容性策略，尽量不碰其他 Mod 的自定义 UI、字体和材质
+- **No game asset modification**：不修改任何游戏资源文件和 AssetBundle，卸载即恢复原样
+- **Independent**：标准 BepInEx 插件，无 Harmony，不依赖 CUCoreLib / ScavLib / RshLib，也不引用游戏内部程序集类型
 
-## 功能
-
-- 从 `BepInEx/plugins/cu-font-loader/fonts/` 加载字体
-- 支持 `.ttf` 和 `.otf`
-- 可作为 TextMeshPro fallback 字体补缺字
-- 可在运行时替换已有文本和后续生成的文本
-- 同时处理 TextMeshPro 文本和旧版 `UnityEngine.UI.Text`
-- 替换时保留游戏原字体作为 fallback，避免符号、图标或缺字变成方块
-- 不修改游戏资源包
-- 不依赖 Harmony
+> **v1.4.0-pre.1 是 Compatibility Update Preview（兼容性预览版）。**
+> 本版本重点是与现有 BepInEx Mod 生态和平共处。由于尚未对大型 Modpack 做充分测试，
+> 如果你遇到其他 Mod 的 UI 被误伤、字体显示异常或替换不生效，请到
+> [Issues](https://github.com/FenChen0211/cu-font-loader/issues) 反馈（附上 BepInEx 日志更佳）。
 
 ## 安装
 
-1. 确保游戏已经安装 BepInEx。
-2. 把 `cu-font-loader.dll` 放到：
-
-```text
-BepInEx/plugins/cu-font-loader/cu-font-loader.dll
-```
-
-3. 把你想使用的 `.ttf` 或 `.otf` 字体放到：
-
-```text
-BepInEx/plugins/cu-font-loader/fonts/
-```
-
-示例：
+1. 确保游戏已经安装 BepInEx（5.x）。
+2. 把插件解压到游戏根目录，得到如下结构：
 
 ```text
 BepInEx/
@@ -38,12 +24,11 @@ BepInEx/
     cu-font-loader/
       cu-font-loader.dll
       fonts/
-        YourFont.ttf
+        README.txt   <- 占位文件，把字体和它放在一起
 ```
 
+3. 把你想使用的 `.ttf` 或 `.otf` 字体放进 `fonts/` 文件夹。
 4. 启动游戏一次，插件会自动生成配置文件。
-
-## 配置
 
 配置文件路径：
 
@@ -51,104 +36,129 @@ BepInEx/
 BepInEx/config/fenchen.cu-font-loader.cfg
 ```
 
-### ReplaceMode
+## 替换模式（ReplaceMode）
 
 ```ini
 [General]
-ReplaceMode = Persistent
+ReplaceMode = Normal
 ScanIntervalSeconds = 1
 ```
 
-可选模式：
-
-| 模式 | 效果 | 适合情况 |
+| 模式 | 行为 | 适合情况 |
 |---|---|---|
-| `FallbackOnly` | 只把外部字体加入 fallback，不主动替换游戏字体 | 最安全，只想补缺字 |
-| `ReplaceOnce` | 发现 TMP 文本时替换一次；后续新生成的文本会通过低频扫描补上 | 常规字体替换 |
-| `Persistent` | 如果游戏把字体改回去，插件会低频再改回来 | 推荐，适合这款游戏 |
+| `FallbackOnly` | 只把外部字体加入 TMP fallback，不主动替换任何字体 | 最安全；只想补中文缺字，不改变原有字形风格 |
+| `Safe` | 只替换"普通"文本：跳过含 `<sprite>` 标签、自定义材质、自定义 Shader 的文本 | 想替换字体但装了不少其他 Mod |
+| `Normal` | 替换大多数文本，仍保留其他 Mod 的自定义 UI 与材质（默认） | 推荐的日常模式 |
+| `Aggressive` | 接近旧版 `Persistent`：每轮扫描强制替换所有未排除的文本，包括自定义材质 | 明确需要强制全局替换时使用 |
 
-`ReplaceOnce` 和 `Persistent` 会按 `ScanIntervalSeconds` 低频扫描新出现的文字。默认 `1` 秒一般够用，不建议设得太小。
+`Safe` / `Normal` 对每个文本只替换一次，之后不会强行改回；`Aggressive` 会持续对抗游戏对字体的重新赋值。
 
-### Font
+### 从旧版本迁移
+
+| 旧配置 | 新行为 | 说明 |
+|---|---|---|
+| `ReplaceMode = FallbackOnly` | 保持 `FallbackOnly` | 不变 |
+| `ReplaceMode = ReplaceOnce` | 自动迁移为 `Normal` | 首次启动时自动改写配置文件并写日志 |
+| `ReplaceMode = Persistent` | 自动迁移为 `Aggressive` | 同上 |
+| `ReplaceAllText = true` | 已废弃 | 不再产生作用；对应的旧需求由 `ReplaceMode` 承接 |
+
+注意：迁移会把配置文件里的旧值改写成新值。如果之后回退到 v1.3.2，旧版本无法识别 `Normal` / `Aggressive`，会按默认值 `FallbackOnly` 处理（重新设置即可）。
+
+## 兼容性保护（Compatibility）
+
+其他 Mod 可能创建自己的 TMP UI，使用自定义 `TMP_FontAsset`、Glow / Outline 材质、自定义 Shader 或图标字体。本插件的处理原则是：**宁可少替换，也不破坏其他 Mod 的 UI**。
 
 ```ini
+[Compatibility]
+PreserveCustomMaterials = true
+ExcludedFontNames =
+ExcludedMaterialNames =
+ExcludedObjectNames =
+```
+
+### PreserveCustomMaterials
+
+- `true`（默认）：材质不是当前字体默认材质的文本（描边、辉光、自定义 Shader 等）会被**整体跳过**——不替换字体，也不动材质
+- `false`：恢复 v1.3.2 行为，这些文本的字体和材质会被一起替换
+
+字体与材质替换是分离的：正常替换时插件只改 `text.font`，只有当原材质就是原字体的默认材质时才会同步替换成新字体的默认材质。
+
+### 排除规则
+
+三个选项都是**逗号分隔的关键字列表**，不区分大小写，**包含匹配**（名称里含有关键字即命中），留空表示不排除：
+
+```ini
+ExcludedFontNames = FancyModFont, IconFont
+ExcludedMaterialNames = FancyGlow
+ExcludedObjectNames = SomeModMenuTitle, SomeModIcon
+```
+
+- `ExcludedFontNames`：按当前字体（FontAsset）名称匹配
+- `ExcludedMaterialNames`：按当前材质名称匹配
+- `ExcludedObjectNames`：按 GameObject 名称匹配（TMP 与旧版 `UnityEngine.UI.Text` 都生效）
+
+排除规则在**所有替换模式（包括 Aggressive）**下都生效。改变配置后立即生效，无需重启游戏。
+
+### 已知限制
+
+- 插件无法可靠地识别"其他 Mod 创建的字体"——Mod 字体和游戏字体在运行时没有可靠区别，需要排除规则兜底
+- 含 `<sprite>` 标签的文本在 `Safe` 模式会被跳过；`Normal` / `Aggressive` 会替换其字体（精灵图渲染不受字体替换影响）
+- 如果某些游戏 UI 使用了非默认材质，`Normal` 模式会跳过它们，看起来像"没替换到"——这通常是保护机制在工作，可用 CompatibilityLog 确认
+
+## 调试（Debug）
+
+```ini
+[Debug]
+CompatibilityLog = false
+MaxCompatibilityLogs = 200
+LogTextDetails = false
+MaxLoggedTexts = 80
+```
+
+排查"某个 UI 为什么没被替换 / 被误替换"时，把 `CompatibilityLog` 改成 `true`。插件会输出单行决策记录：
+
+```text
+[Compat] Scene=MainMenu Object=SomeModMenuTitle Font=FancyModFont Material=FancyGlowMaterial Action=Skipped Reason=CustomMaterial
+[Compat] Scene=Game Object=DamageText Font=LibSans SDF Material=LibSans SDF Atlas Action=Replaced From=PixelFont
+```
+
+- `Action=Replaced` 时 `From=` 显示替换前的字体
+- `Reason=` 说明跳过原因：`Excluded`（命中排除规则）、`ExcludedMaterial`、`CustomMaterial`、`CustomShader`、`SpriteTag`、`MaterialMissing`、`FontMissing`
+- 同一对象的同一决策只记录一次，不会刷屏；整个会话最多记录 `MaxCompatibilityLogs` 条
+
+`LogTextDetails` 是旧的诊断开关，会把扫描到的 TMP 文本对象完整列出来，仅在深度排查时使用。
+
+## 字体（Font）
+
+```ini
+[General]
+PrimaryFont =
+
 [Font]
 AtlasSize = 4096
 SamplingPointSize = 36
 AtlasPadding = 5
 ```
 
-`AtlasSize` 控制外部字体的动态 TMP 图集大小。中文字符很多，如果图集太小，TMP 可能会回退到游戏原字体，看起来像还有一部分像素字。
-
-默认 `4096` 通常适合中文。如果显存很紧张，可以降到 `2048`，但残留原字体的概率会变高。
-
-### Debug
-
-```ini
-[Debug]
-LogTextDetails = false
-MaxLoggedTexts = 80
-```
-
-如果某个界面仍然没有被替换，可以临时把 `LogTextDetails` 改成 `true`。插件会在日志里输出 TMP 文本对象名称、激活状态、字体名、材质名和文本片段，方便定位 UI 到底使用了什么字体链。
-
-平时建议保持关闭。
+- 加载了多个字体时，`PrimaryFont`（按文件名，不含扩展名）决定用哪一个作为替换字体，其余字体只作为 fallback；留空使用按文件名排序后的第一个
+- `AtlasSize` 控制外部字体的动态 TMP 图集大小。中文字符很多，图集太小会频繁回退到游戏原字体（看起来像残留像素字）。默认 `4096` 适合中文；显存紧张可降到 `2048`
 
 ## 语言切换刷新
 
-在 Casualties: Unknown Demo 中，部分本地化 UI 会在启动早期生成。插件已经替换了字体对象，但这些 UI 有时需要游戏重新加载本地化界面后才会完全刷新。
-
-如果安装插件后仍看到少量字体没有替换，可以在游戏内手动切换一次语言，例如：
-
-```text
-中文 -> English -> 中文
-```
-
-或：
-
-```text
-English -> 中文
-```
-
-游戏切换语言时会重载当前场景，插件会在场景重载后重新扫描并替换字体。实际测试中，这通常可以完成全局字体替换。
-
-## 旧配置兼容
-
-旧版本使用：
-
-```ini
-ReplaceAllText = true
-```
-
-这个选项仍然保留。如果 `ReplaceMode` 还没有写入配置文件，那么 `ReplaceAllText = true` 会让插件默认进入 `ReplaceOnce` 模式。
-
-新配置建议直接使用 `ReplaceMode`。
+部分本地化 UI 会在启动早期生成，需要游戏重载本地化界面后才会完全刷新。如果安装插件后仍看到少量字体没变，可以在游戏内切换一次语言（中文 → English → 中文），场景重载后插件会重新扫描。
 
 ## 替换原理
 
-插件不会硬改游戏资源包里的字体文件。
-
-替换时大概是这样：
+插件不会修改游戏资源包：
 
 ```text
 某个 TMP 文本原本使用游戏字体 A
-插件把它改成外部字体 B
-插件同时把游戏字体 A 加入字体 B 的 fallback 列表
+插件把它改成外部字体 B（只在原材质是默认材质时同步默认材质）
+插件把字体 A 加入字体 B 的 fallback 列表
+外部字体同时加入 TMP 全局 fallback
 ```
 
-这样视觉上会优先使用外部字体；如果外部字体缺少某些字符、图标或特殊符号，TextMeshPro 仍然可以回退到游戏原字体。
-
-## 为什么不直接替换游戏内置字体？
-
-游戏字体通常是打包进 Unity 资源里的 `TMP_FontAsset`，不一定会以单独 `.ttf` 文件存在。
-
-直接改资源包风险更高：
-
-- 游戏更新后容易被覆盖
-- 资源包编辑失败可能导致游戏资源损坏
-- 卸载 mod 不方便
-
-BepInEx 运行时替换更干净：删除插件后，游戏就会恢复原样。
+缺字、图标和特殊符号仍然可以回退到游戏原字体渲染。删除插件目录即可完全恢复原样。
 
 ## 编译
 
@@ -174,6 +184,8 @@ bin/cu-font-loader.dll
 ```
 
 `GameDir` 应指向包含 `BepInEx/` 和 `CasualtiesUnknown_Data/` 的游戏根目录。
+
+发布包（dist/*.zip）结构即上文安装部分的结构：`BepInEx/plugins/cu-font-loader/` 下只有 dll 和空的 `fonts/`（含占位说明文件），不打包任何字体文件。
 
 ## 许可
 
