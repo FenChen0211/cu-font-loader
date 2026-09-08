@@ -93,7 +93,7 @@ namespace CuFontLoader
                 "General",
                 "ScanIntervalSeconds",
                 1.0f,
-                "ReplaceOnce 或 Persistent 模式下，扫描新 TMP 文本的间隔秒数。"
+                "Safe / Normal / Aggressive 模式下，扫描新 TMP 文本的间隔秒数。不建议低于 0.25。"
             );
 
             PrimaryFont = Config.Bind(
@@ -289,7 +289,15 @@ namespace CuFontLoader
                 return decision;
             }
 
-            if (MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns) ||
+            if (ExcludedObjectPatterns.Count > 0 &&
+                MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns))
+            {
+                decision.Replace = false;
+                decision.SkipReason = "Excluded";
+                return decision;
+            }
+
+            if (ExcludedFontPatterns.Count > 0 &&
                 MatchesExclusion(font.name, ExcludedFontPatterns))
             {
                 decision.Replace = false;
@@ -305,7 +313,8 @@ namespace CuFontLoader
                 return decision;
             }
 
-            if (MatchesExclusion(material.name, ExcludedMaterialPatterns))
+            if (ExcludedMaterialPatterns.Count > 0 &&
+                MatchesExclusion(material.name, ExcludedMaterialPatterns))
             {
                 decision.Replace = false;
                 decision.SkipReason = "ExcludedMaterial";
@@ -431,6 +440,11 @@ namespace CuFontLoader
 
         private static void LogReplaced(TMP_Text text, TMP_FontAsset previousFont)
         {
+            if (!CompatibilityLog.Value || decisionLogCapReached)
+            {
+                return;
+            }
+
             string from = previousFont != null ? previousFont.name : "<null>";
             if (!TryBeginDecisionLog(text, "R|" + from))
             {
@@ -449,6 +463,11 @@ namespace CuFontLoader
 
         private static void LogSkipped(TMP_Text text, string reason)
         {
+            if (!CompatibilityLog.Value || decisionLogCapReached)
+            {
+                return;
+            }
+
             string fontName = text.font != null ? text.font.name : "<null>";
             if (!TryBeginDecisionLog(text, "S|" + reason + "|" + fontName))
             {
@@ -467,6 +486,11 @@ namespace CuFontLoader
 
         private static void LogLegacyReplaced(UnityEngine.UI.Text text, Font previousFont)
         {
+            if (!CompatibilityLog.Value || decisionLogCapReached)
+            {
+                return;
+            }
+
             string from = previousFont != null ? previousFont.name : "<null>";
             if (!TryBeginDecisionLog(text, "R|" + from))
             {
@@ -483,6 +507,11 @@ namespace CuFontLoader
 
         private static void LogLegacySkipped(UnityEngine.UI.Text text, string reason)
         {
+            if (!CompatibilityLog.Value || decisionLogCapReached)
+            {
+                return;
+            }
+
             string fontName = text.font != null ? text.font.name : "<null>";
             if (!TryBeginDecisionLog(text, "S|" + reason + "|" + fontName))
             {
@@ -531,7 +560,6 @@ namespace CuFontLoader
             {
                 Log.LogInfo("Loading: " + Path.GetFileName(fontPath));
                 Font dynamicFont = new Font(fontPath);
-                LoadedUnityFonts.Add(dynamicFont);
                 int atlasSize = Mathf.Clamp(AtlasSize.Value, 512, 8192);
                 int samplingPointSize = Mathf.Clamp(SamplingPointSize.Value, 8, 128);
                 int atlasPadding = Mathf.Clamp(AtlasPadding.Value, 1, 16);
@@ -554,6 +582,7 @@ namespace CuFontLoader
                 fontAsset.atlasPopulationMode = AtlasPopulationMode.Dynamic;
                 fontAsset.isMultiAtlasTexturesEnabled = true;
                 LoadedFonts.Add(fontAsset);
+                LoadedUnityFonts.Add(dynamicFont);
                 Log.LogInfo("  OK: " + fontAsset.name + " (" + atlasSize + "x" + atlasSize + " dynamic atlas)");
             }
             catch (System.Exception ex)
@@ -579,7 +608,6 @@ namespace CuFontLoader
             int replaced = 0;
             int skipped = 0;
             int patchedFallback = 0;
-            int patchedControls = PatchTmpControls();
             FontReplaceMode mode = GetEffectiveMode();
             bool enforceRepeatedly = mode == FontReplaceMode.Aggressive || mode == FontReplaceMode.Persistent;
 
@@ -637,6 +665,8 @@ namespace CuFontLoader
             {
                 LogTextSnapshot(allTexts);
             }
+
+            int patchedControls = PatchTmpControls();
 
             if (logResult || replaced > 0)
             {
@@ -759,8 +789,10 @@ namespace CuFontLoader
                     continue;
                 }
 
-                if (MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns) ||
-                    MatchesExclusion(text.font.name, ExcludedFontPatterns))
+                if ((ExcludedObjectPatterns.Count > 0 &&
+                        MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns)) ||
+                    (ExcludedFontPatterns.Count > 0 &&
+                        MatchesExclusion(text.font.name, ExcludedFontPatterns)))
                 {
                     LogLegacySkipped(text, "Excluded");
                     continue;
@@ -791,6 +823,11 @@ namespace CuFontLoader
         private static void RegisterGlobalFallbacks()
         {
             List<TMP_FontAsset> globalFallbacks = TMP_Settings.fallbackFontAssets;
+            if (globalFallbacks == null)
+            {
+                return;
+            }
+
             foreach (TMP_FontAsset fontAsset in LoadedFonts)
             {
                 if (!globalFallbacks.Contains(fontAsset))
