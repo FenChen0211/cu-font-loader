@@ -8,7 +8,7 @@
 - **No game asset modification**：不修改任何游戏资源文件和 AssetBundle，卸载即恢复原样
 - **Independent**：标准 BepInEx 插件，无 Harmony，不依赖 CUCoreLib / ScavLib / RshLib，也不引用游戏内部程序集类型
 
-> **v1.4.0-pre.1 是 Compatibility Update Preview（兼容性预览版）。**
+> **v1.4.0 是 Compatibility Update（兼容性更新）。**
 > 本版本重点是与现有 BepInEx Mod 生态和平共处。由于尚未对大型 Modpack 做充分测试，
 > 如果你遇到其他 Mod 的 UI 被误伤、字体显示异常或替换不生效，请到
 > [Issues](https://github.com/FenChen0211/cu-font-loader/issues) 反馈（附上 BepInEx 日志更佳）。
@@ -51,7 +51,7 @@ ScanIntervalSeconds = 1
 | `Normal` | 替换大多数文本，仍保留其他 Mod 的自定义 UI 与材质（默认） | 推荐的日常模式 |
 | `Aggressive` | 接近旧版 `Persistent`：每轮扫描强制替换所有未排除的文本，包括自定义材质 | 明确需要强制全局替换时使用 |
 
-`Safe` / `Normal` 对每个文本只替换一次，之后不会强行改回；`Aggressive` 会持续对抗游戏对字体的重新赋值。
+`Safe` / `Normal` 对每个文本和 TMP 输入框只替换一次，之后不会强行改回；`Aggressive` 会持续对抗游戏对字体或材质的重新赋值。
 
 ### 从旧版本迁移
 
@@ -78,10 +78,11 @@ ExcludedObjectNames =
 
 ### PreserveCustomMaterials
 
-- `true`（默认）：材质不是当前字体默认材质的文本（描边、辉光、自定义 Shader 等）会被**整体跳过**——不替换字体，也不动材质
-- `false`：恢复 v1.3.2 行为，这些文本的字体和材质会被一起替换
+- `true`（默认）：`Safe` / `Normal` 模式下，材质不是当前字体默认材质的文本（描边、辉光、自定义 Shader 等）会被**整体跳过**——不替换字体，也不动材质
+- `false`：`Safe` / `Normal` 也会替换这些文本的字体和材质
+- `Aggressive`：无论此选项为何值，都会恢复 v1.3.2 的强制行为并持续替换字体和材质
 
-字体与材质替换是分离的：正常替换时插件只改 `text.font`，只有当原材质就是原字体的默认材质时才会同步替换成新字体的默认材质。
+字体与材质替换是分离的：默认的 `Safe` / `Normal` 替换只改 `text.font`，只有当原材质就是原字体的默认材质时才会同步替换成新字体的默认材质；关闭保护或使用 `Aggressive` 时会强制同步材质。
 
 ### 排除规则
 
@@ -120,9 +121,11 @@ MaxLoggedTexts = 80
 ```text
 [Compat] Scene=MainMenu Object=SomeModMenuTitle Font=FancyModFont Material=FancyGlowMaterial Action=Skipped Reason=CustomMaterial
 [Compat] Scene=Game Object=DamageText Font=LibSans SDF Material=LibSans SDF Atlas Action=Replaced From=PixelFont
+[Compat] Scene=Game Object=DamageText Font=LibSans SDF Material=LibSans SDF Atlas Action=MaterialFixed From=TemporaryGlow
 ```
 
 - `Action=Replaced` 时 `From=` 显示替换前的字体
+- `Action=MaterialFixed` 表示 `Aggressive` 模式只修复了材质，`From=` 显示替换前的材质
 - `Reason=` 说明跳过原因：`Excluded`（命中排除规则）、`ExcludedMaterial`、`CustomMaterial`、`CustomShader`、`SpriteTag`、`MaterialMissing`、`FontMissing`
 - 同一对象的同一决策只记录一次，不会刷屏；整个会话最多记录 `MaxCompatibilityLogs` 条
 

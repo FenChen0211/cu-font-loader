@@ -15,7 +15,7 @@ using UnityEngine.TextCore.LowLevel;
 
 namespace CuFontLoader
 {
-    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.4.0-pre.1")]
+    [BepInPlugin("fenchen.cu-font-loader", "CU Font Loader", "1.4.0")]
     public class FontLoaderPlugin : BaseUnityPlugin
     {
         private static ManualLogSource Log;
@@ -25,6 +25,7 @@ namespace CuFontLoader
         private static Font PrimaryUnityFont;
         private static readonly HashSet<TMP_Text> SeenTexts = new HashSet<TMP_Text>();
         private static readonly HashSet<UnityEngine.UI.Text> SeenLegacyTexts = new HashSet<UnityEngine.UI.Text>();
+        private static readonly HashSet<TMP_InputField> SeenInputFields = new HashSet<TMP_InputField>();
         private static readonly List<string> ExcludedObjectPatterns = new List<string>();
         private static readonly List<string> ExcludedFontPatterns = new List<string>();
         private static readonly List<string> ExcludedMaterialPatterns = new List<string>();
@@ -129,8 +130,8 @@ namespace CuFontLoader
                 "Compatibility",
                 "PreserveCustomMaterials",
                 true,
-                "保护其他 Mod 的自定义材质。开启时，使用非默认材质（描边、辉光、自定义 Shader 等）的文本会被整体跳过，不会替换其字体。" +
-                "关闭后恢复旧版行为：这些文本的字体和材质会被一起替换。"
+                "保护其他 Mod 的自定义材质。开启时，Safe / Normal 模式会整体跳过使用非默认材质（描边、辉光、自定义 Shader 等）的文本。" +
+                "Aggressive 模式始终恢复旧版强制行为；关闭后，Safe / Normal 也会替换这些文本的字体和材质。"
             );
 
             ExcludedFontNames = Config.Bind(
@@ -276,6 +277,7 @@ namespace CuFontLoader
         {
             TextDecision decision = default(TextDecision);
             decision.Replace = true;
+            FontReplaceMode mode = GetEffectiveMode();
 
             TMP_FontAsset font = text.font;
             if (font == null)
@@ -286,11 +288,6 @@ namespace CuFontLoader
             }
 
             TMP_FontAsset primary = GetPrimaryFontAsset();
-            if (primary != null && font == primary)
-            {
-                decision.Replace = false;
-                return decision;
-            }
 
             if (ExcludedObjectPatterns.Count > 0 &&
                 MatchesExclusion(text.gameObject.name, ExcludedObjectPatterns))
@@ -311,12 +308,15 @@ namespace CuFontLoader
             Material material = text.fontSharedMaterial;
             if (material == null)
             {
-                decision.Replace = false;
-                decision.SkipReason = "MaterialMissing";
-                return decision;
+                if (mode != FontReplaceMode.Aggressive)
+                {
+                    decision.Replace = false;
+                    decision.SkipReason = "MaterialMissing";
+                    return decision;
+                }
             }
 
-            if (ExcludedMaterialPatterns.Count > 0 &&
+            if (material != null && ExcludedMaterialPatterns.Count > 0 &&
                 MatchesExclusion(material.name, ExcludedMaterialPatterns))
             {
                 decision.Replace = false;
@@ -324,15 +324,20 @@ namespace CuFontLoader
                 return decision;
             }
 
-            FontReplaceMode mode = GetEffectiveMode();
-            if (mode != FontReplaceMode.Aggressive && !IsTmpShader(material.shader))
+            if (material != null &&
+                mode != FontReplaceMode.Aggressive &&
+                !IsTmpShader(material.shader) &&
+                PreserveCustomMaterials.Value)
             {
                 decision.Replace = false;
                 decision.SkipReason = "CustomShader";
                 return decision;
             }
 
-            if (material != font.material && PreserveCustomMaterials.Value)
+            if (material != null &&
+                material != font.material &&
+                PreserveCustomMaterials.Value &&
+                mode != FontReplaceMode.Aggressive)
             {
                 decision.Replace = false;
                 decision.SkipReason = "CustomMaterial";
@@ -348,6 +353,12 @@ namespace CuFontLoader
                     decision.SkipReason = "SpriteTag";
                     return decision;
                 }
+            }
+
+            if (primary != null && font == primary)
+            {
+                decision.Replace =
+                    mode == FontReplaceMode.Aggressive && material != primary.material;
             }
 
             return decision;
@@ -464,6 +475,30 @@ namespace CuFontLoader
                 " From=" + from);
         }
 
+        private static void LogMaterialFixed(TMP_Text text, Material previousMaterial)
+        {
+            if (!CompatibilityLog.Value || decisionLogCapReached)
+            {
+                return;
+            }
+
+            string from = previousMaterial != null ? previousMaterial.name : "<null>";
+            if (!TryBeginDecisionLog(text, "M|" + from))
+            {
+                return;
+            }
+
+            string fontName = text.font != null ? text.font.name : "<null>";
+            string materialName = text.fontSharedMaterial != null ? text.fontSharedMaterial.name : "<null>";
+            Log.LogInfo(
+                "[Compat] Scene=" + SceneManager.GetActiveScene().name +
+                " Object=" + text.gameObject.name +
+                " Font=" + fontName +
+                " Material=" + materialName +
+                " Action=MaterialFixed" +
+                " From=" + from);
+        }
+
         private static void LogSkipped(TMP_Text text, string reason)
         {
             if (!CompatibilityLog.Value || decisionLogCapReached)
@@ -533,6 +568,7 @@ namespace CuFontLoader
         {
             SeenTexts.RemoveWhere(t => t == null);
             SeenLegacyTexts.RemoveWhere(t => t == null);
+            SeenInputFields.RemoveWhere(input => input == null);
 
             List<UnityEngine.Object> deadKeys = null;
             foreach (KeyValuePair<UnityEngine.Object, string> pair in DecisionLogCache)
@@ -598,6 +634,7 @@ namespace CuFontLoader
         {
             SeenTexts.Clear();
             SeenLegacyTexts.Clear();
+            SeenInputFields.Clear();
             DecisionLogCache.Clear();
             ApplyToLoadedText(true);
             ApplyToLoadedLegacyText(true);
@@ -612,7 +649,7 @@ namespace CuFontLoader
             int skipped = 0;
             int patchedFallback = 0;
             FontReplaceMode mode = GetEffectiveMode();
-            bool enforceRepeatedly = mode == FontReplaceMode.Aggressive || mode == FontReplaceMode.Persistent;
+            bool enforceRepeatedly = mode == FontReplaceMode.Aggressive;
 
             scanPassCount++;
             if (scanPassCount % 32 == 0)
@@ -656,11 +693,19 @@ namespace CuFontLoader
                 }
 
                 TMP_FontAsset previousFont = text.font;
+                Material previousMaterial = text.fontSharedMaterial;
                 if (ReplaceTextFont(text))
                 {
                     SeenTexts.Add(text);
                     replaced++;
-                    LogReplaced(text, previousFont);
+                    if (previousFont == text.font && previousMaterial != text.fontSharedMaterial)
+                    {
+                        LogMaterialFixed(text, previousMaterial);
+                    }
+                    else
+                    {
+                        LogReplaced(text, previousFont);
+                    }
                 }
             }
 
@@ -737,6 +782,8 @@ namespace CuFontLoader
             }
 
             int patched = 0;
+            FontReplaceMode mode = GetEffectiveMode();
+            bool enforceRepeatedly = mode == FontReplaceMode.Aggressive;
 
             TMP_InputField[] inputFields = Resources.FindObjectsOfTypeAll<TMP_InputField>();
             foreach (TMP_InputField inputField in inputFields)
@@ -748,6 +795,18 @@ namespace CuFontLoader
 
                 TMP_Text textComponent = inputField.textComponent;
                 if (textComponent == null || textComponent.font != primary)
+                {
+                    continue;
+                }
+
+                TextDecision decision = EvaluateTMPText(textComponent);
+                if (decision.SkipReason != null)
+                {
+                    continue;
+                }
+
+                bool firstSeen = SeenInputFields.Add(inputField);
+                if (!enforceRepeatedly && !firstSeen)
                 {
                     continue;
                 }
@@ -775,7 +834,7 @@ namespace CuFontLoader
             }
 
             FontReplaceMode mode = GetEffectiveMode();
-            bool enforceRepeatedly = mode == FontReplaceMode.Aggressive || mode == FontReplaceMode.Persistent;
+            bool enforceRepeatedly = mode == FontReplaceMode.Aggressive;
 
             UnityEngine.UI.Text[] allTexts = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Text>();
             int replaced = 0;
@@ -885,26 +944,39 @@ namespace CuFontLoader
             }
 
             TMP_FontAsset currentFont = text.font;
-            if (currentFont == null || currentFont == replacement)
+            if (currentFont == null)
             {
                 return false;
             }
 
             Material currentMaterial = text.fontSharedMaterial;
+            FontReplaceMode mode = GetEffectiveMode();
             bool replaceMaterial =
                 currentMaterial == null ||
                 currentMaterial == currentFont.material ||
-                !PreserveCustomMaterials.Value;
+                !PreserveCustomMaterials.Value ||
+                mode == FontReplaceMode.Aggressive;
 
-            text.font = replacement;
+            bool changed = false;
+
+            if (currentFont != replacement)
+            {
+                text.font = replacement;
+                changed = true;
+            }
 
             if (replaceMaterial && text.fontSharedMaterial != replacement.material)
             {
                 text.fontSharedMaterial = replacement.material;
+                changed = true;
             }
 
-            text.SetAllDirty();
-            return true;
+            if (changed)
+            {
+                text.SetAllDirty();
+            }
+
+            return changed;
         }
 
         private static void ResolvePrimaryFont()
