@@ -8,8 +8,8 @@
 - **No game asset modification**：不修改任何游戏资源文件和 AssetBundle，卸载即恢复原样
 - **Independent**：标准 BepInEx 插件，无 Harmony，不依赖 CUCoreLib / ScavLib / RshLib，也不引用游戏内部程序集类型
 
-> **v1.4.0 是 Compatibility Update（兼容性更新）。**
-> 本版本重点是与现有 BepInEx Mod 生态和平共处。由于尚未对大型 Modpack 做充分测试，
+> **v1.4.0-pre.1 是 Compatibility Update Preview（兼容性预览版）。**
+> 本预览版尚未完成目标环境实机测试，不应视为稳定版本。本版本重点是与现有 BepInEx Mod 生态和平共处；由于尚未对大型 Modpack 做充分测试，
 > 如果你遇到其他 Mod 的 UI 被误伤、字体显示异常或替换不生效，请到
 > [Issues](https://github.com/FenChen0211/cu-font-loader/issues) 反馈（附上 BepInEx 日志更佳）。
 
